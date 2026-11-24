@@ -34,7 +34,7 @@ elseif (${TARGET_ARCH} STREQUAL "pcie")
     message("PCIE mode, starting......")
 endif()
 
-add_definitions(-DDEBUG --std=c++17 -fPIC -Wall -Werror)
+add_definitions(-DDEBUG --std=c++17 -fPIC -Wall -Werror -Wno-error=unused-function)
 set(CMAKE_BUILD_TYPE "Debug")
 
 set(OPENCV_LIBS opencv_core opencv_imgproc opencv_imgcodecs opencv_videoio)

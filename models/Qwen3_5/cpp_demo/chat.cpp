@@ -11,6 +11,7 @@
 #include "json.hpp"
 #include <fstream>
 #include <iostream>
+#include <cstdlib>
 
 static void print_devmem_info(bm_handle_t &bm_handle) {
   bm_dev_stat_t stat;
@@ -311,6 +312,33 @@ void Qwen3_5::init(int dev_id, std::string model_path, std::string config_path,
   std::cout << "Device [ " << dev_id << " ] loading .....\n";
   bm_status_t status = bm_dev_request(&bm_handle, dev_id);
   assert(BM_SUCCESS == status);
+
+  // [fix] Pin this handle's kernel launches to ONE TPU core by default.
+  // Without pinning, the scheduler round-robins 1-core bmodel launches
+  // across all TPU cores. Consecutive launches then land on different
+  // cores whose firmware msg-window state (counters tracked per core in
+  // the shared msg hub) does not carry over from the previous core's
+  // task: the first decode tokens come out corrupted and the engine
+  // eventually deadlocks inside the kernel function (single-process hang,
+  // reproduced 2/2 without this pin, 3/3 stable with it).
+  // Multi-core bmodels are unaffected: a task needing more cores than the
+  // 1-core window makes the driver fall back to automatic placement.
+  // CORE_AFFINITY=start,num overrides the default (e.g. "1,1" for the
+  // second process in a dual-process deployment). Boards without the API
+  // (non-84x6) just get BM_NOT_SUPPORTED and keep the old behavior.
+  {
+    int cs = 0, cn = 1;
+    if (const char *aff = getenv("CORE_AFFINITY")) {
+      int s = -1, n = -1;
+      if (sscanf(aff, "%d,%d", &s, &n) == 2 && s >= 0 && n > 0) {
+        cs = s;
+        cn = n;
+      }
+    }
+    bm_status_t arc = bm_set_core_affinity(bm_handle, cs, cn);
+    std::cout << "[affinity] bm_set_core_affinity(" << cs << "," << cn
+              << ") -> " << arc << std::endl;
+  }
 
   // create bmruntime
   p_bmrt = bmrt_create(bm_handle);
